@@ -1,0 +1,150 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
+
+BOT_TOKEN = "8518576901:AAFGslDw2-Jas9y-YOoe62YWEtywz9_udWc"
+ADMIN_ID = 7441252176
+OTP_GROUP_LINK = "https://t.me/otpwhu"
+
+CHANNELS = ["@bd_wh_eran1", "@nameber_channel12", "@hnculc"]
+
+numbers = {}
+used_numbers = {}
+user_data = {}
+
+# -------- LOAD NUMBERS ----------
+def load_numbers():
+    global numbers
+    numbers = {}
+    with open("numbers.txt", "r") as f:
+        for line in f:
+            if "|" in line:
+                country, num = line.strip().split("|")
+                numbers.setdefault(country, []).append(num)
+
+# -------- CHECK CHANNEL JOIN ----------
+async def is_joined_all(bot, user_id):
+    for ch in CHANNELS:
+        try:
+            m = await bot.get_chat_member(ch, user_id)
+            if m.status not in ["member", "administrator", "creator"]:
+                return False
+        except:
+            return False
+    return True
+
+# -------- START ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    buttons = []
+    for ch in CHANNELS:
+        buttons.append([InlineKeyboardButton(f"Join {ch}", url=f"https://t.me/{ch[1:]}")])
+
+    buttons.append([InlineKeyboardButton("✅ Continue", callback_data="continue")])
+
+    await update.message.reply_text(
+        "🔐 সবগুলো Channel Join করুন তারপর Continue চাপুন",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+# -------- CONTINUE ----------
+async def continue_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not await is_joined_all(context.bot, query.from_user.id):
+        await query.answer("❌ সবগুলো Channel Join করেননি", show_alert=True)
+        return
+
+    keyboard = [[InlineKeyboardButton(c, callback_data=f"country|{c}")]
+                for c in numbers.keys()]
+
+    await query.message.reply_text(
+        "🌍 Country Select করুন",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# -------- COUNTRY ----------
+async def select_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    country = query.data.split("|")[1]
+    user_data[query.from_user.id] = {"country": country}
+
+    await send_number(query)
+
+# -------- SEND NUMBER ----------
+async def send_number(query):
+    uid = query.from_user.id
+    country = user_data[uid]["country"]
+
+    used = used_numbers.setdefault(uid, set())
+
+    for num in numbers.get(country, []):
+        if num not in used:
+            used.add(num)
+
+            buttons = [
+                [InlineKeyboardButton("🔄 Change Number", callback_data="change")],
+                [InlineKeyboardButton("📩 OTP Group", url=OTP_GROUP_LINK)],
+                [InlineKeyboardButton("🌍 Change Country", callback_data="change_country")]
+            ]
+
+            await query.message.reply_text(
+                f"📱 COUNTRY: {country}\n\n📞 NUMBER:\n`{num}`",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+            return
+
+    await query.message.reply_text("❌ এই Country তে আর নাম্বার নেই")
+
+# -------- CHANGE NUMBER ----------
+async def change_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await send_number(update.callback_query)
+
+# -------- CHANGE COUNTRY ----------
+async def change_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = [[InlineKeyboardButton(c, callback_data=f"country|{c}")]
+                for c in numbers.keys()]
+
+    await query.message.reply_text(
+        "🌍 নতুন Country Select করুন",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# -------- ADMIN UPLOAD ----------
+async def upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    file = await update.message.document.get_file()
+    await file.download_to_drive("numbers.txt")
+    load_numbers()
+
+    await update.message.reply_text("✅ numbers.txt Updated Successfully")
+
+# -------- MAIN ----------
+load_numbers()
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(continue_btn, pattern="continue"))
+app.add_handler(CallbackQueryHandler(select_country, pattern="country"))
+app.add_handler(CallbackQueryHandler(change_number, pattern="change"))
+app.add_handler(CallbackQueryHandler(change_country, pattern="change_country"))
+app.add_handler(MessageHandler(filters.Document.TEXT, upload))
+
+print("✅ Bot Running...")
+app.run_polling()
